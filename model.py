@@ -16,7 +16,12 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 class LayerNorm(nn.Module):
-    """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
+    """
+    LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False.
+    Layer Normalization normalizes the output of a layer (mean 0, variance 1)
+    and scales/shifts it using learned parameters. This custom class adds a toggle
+    for the bias parameter for optimization purposes.
+    """
 
     def __init__(self, ndim, bias):
         super().__init__()
@@ -27,6 +32,12 @@ class LayerNorm(nn.Module):
         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
 
 class CausalSelfAttention(nn.Module):
+    """
+    The heart of the Transformer. Calculates multi-head masked self-attention.
+    Projects the input into Queries, Keys, and Values. It applies a causal mask
+    so that tokens can only attend to previous tokens, not future ones, ensuring
+    autoregressive generation. Takes a weighted sum of the Values based on Attention scores.
+    """
 
     def __init__(self, config):
         super().__init__()
@@ -76,6 +87,12 @@ class CausalSelfAttention(nn.Module):
         return y
 
 class MLP(nn.Module):
+    """
+    A standard Feed-Forward Neural Network (Multi-Layer Perceptron).
+    Acts as the 'thinking' part of the transformer block. After attention mixes
+    information across the sequence, the MLP processes that combined information
+    individually per token. Uses a GELU activation function.
+    """
 
     def __init__(self, config):
         super().__init__()
@@ -92,6 +109,12 @@ class MLP(nn.Module):
         return x
 
 class Block(nn.Module):
+    """
+    The fundamental repeating unit of a Transformer. A GPT model is primarily a stack
+    of these blocks. Each block applies Layer Normalization, multi-head Causal Self-Attention
+    to mix information across the sequence, and an MLP to process the mixed information,
+    along with residual connections.
+    """
 
     def __init__(self, config):
         super().__init__()
@@ -107,6 +130,11 @@ class Block(nn.Module):
 
 @dataclass
 class GPTConfig:
+    """
+    A blueprint/settings class holding hyperparameters for the GPT model.
+    Defines the depth (n_layer), width (n_embd), attention heads (n_head),
+    vocab size, and maximum sequence length (block_size).
+    """
     block_size: int = 1024
     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
     n_layer: int = 12
@@ -116,6 +144,13 @@ class GPTConfig:
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
 
 class GPT(nn.Module):
+    """
+    The main GPT model container. It ties everything together:
+    - Word Token Embeddings (wte) and Word Position Embeddings (wpe)
+    - A stack of Transformer Blocks
+    - A final Output Head (lm_head) to project back to the vocabulary size
+    It defines how data flows from input tokens to predicted logits.
+    """
 
     def __init__(self, config):
         super().__init__()

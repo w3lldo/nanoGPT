@@ -1,0 +1,76 @@
+{
+  "_comment": "Claude Code / Copilot-with-Claude agent settings for nanoGPT",
+
+  "project": {
+    "name": "nanoGPT",
+    "language": "Python",
+    "version": "latest",
+    "rootMemoryFile": "CLAUDE.md"
+  },
+
+  "context": {
+    "alwaysRead": [
+      "CLAUDE.md"
+    ],
+    "referenceOnDemand": [
+      "docs/architecture.md",
+      "docs/decisions/",
+      "docs/runbooks/",
+      "model.py",
+      "train.py",
+      "sample.py",
+      "configurator.py"
+    ],
+    "ignore": [
+      "out/",
+      "out-*/",
+      "data/**/*.bin",
+      "__pycache__/",
+      "*.pyc",
+      ".idea/",
+      ".vscode/",
+      "*.ipynb_checkpoints"
+    ]
+  },
+
+  "rules": {
+    "forbid": [
+      "import argparse  -- use configurator.py globals pattern instead",
+      "from transformers import Trainer  -- no trainer framework; raw PyTorch only",
+      "import lightning  -- no PyTorch Lightning",
+      "print() inside nn.Module.forward()  -- model.py has no I/O side effects",
+      "import accelerate  -- no HuggingFace Accelerate"
+    ],
+    "require": [
+      "All hyperparameters are module-level globals in train.py/sample.py",
+      "Checkpoints must use the dict schema: model, optimizer, model_args, iter_num, best_val_loss, config",
+      "transformer.wte.weight and lm_head.weight must remain tied",
+      "Flash Attention (scaled_dot_product_attention) must be used when available"
+    ],
+    "codeStyle": {
+      "errorHandling": "assert statements for invariants; standard Python exceptions for user-facing errors",
+      "logging": "print() for training progress; wandb.log() for metrics when wandb_log=True",
+      "asyncRuntime": "none — synchronous Python; DDP parallelism via torchrun"
+    }
+  },
+
+  "skills": {
+    "directory": ".claude/skills/",
+    "available": [
+      "code-review/SKILL.md",
+      "refactor/SKILL.md",
+      "release/SKILL.md"
+    ]
+  },
+
+  "hooks": {
+    "directory": ".claude/hooks/",
+    "beforeEdit": "hooks/pre-edit.md",
+    "afterEdit": "hooks/post-edit.md"
+  },
+
+  "tools": {
+    "scripts": "tools/scripts/",
+    "prompts": "tools/prompts/"
+  }
+}
