@@ -1,0 +1,120 @@
+<svg width="800" height="900" xmlns="http://www.w3.org/2000/svg" style="background-color: #1a1a2e; font-family: Arial, sans-serif;">
+    <defs>
+        <!-- Glow effects -->
+        <filter id="glow-yellow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="5" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+        </filter>
+        <filter id="glow-blue" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="5" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+        </filter>
+        <filter id="glow-green" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="5" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+        </filter>
+        <!-- Arrowhead -->
+        <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#cccccc" />
+        </marker>
+    </defs>
+
+    <!-- Title -->
+    <text x="400" y="40" fill="#ffffff" font-size="24" font-weight="bold" text-anchor="middle">TRANSFORMER BLOCK ARCHITECTURE</text>
+    <text x="400" y="65" fill="#aaaaaa" font-size="16" text-anchor="middle">Residual connections, LayerNorm, and MLP</text>
+
+    <!-- Shared Input (x) -->
+    <text x="400" y="110" fill="#ffffff" font-size="18" font-weight="bold" text-anchor="middle">INPUT x</text>
+    <g transform="translate(400, 140)">
+        <circle cx="-60" cy="0" r="20" fill="#1a1a2e" stroke="#f1c40f" stroke-width="2" filter="url(#glow-yellow)"/>
+        <text x="-60" y="6" fill="#f1c40f" font-size="16" text-anchor="middle">x₁</text>
+        <circle cx="-20" cy="0" r="20" fill="#1a1a2e" stroke="#f1c40f" stroke-width="2" filter="url(#glow-yellow)"/>
+        <text x="-20" y="6" fill="#f1c40f" font-size="16" text-anchor="middle">x₂</text>
+        <circle cx="20" cy="0" r="20" fill="#1a1a2e" stroke="#f1c40f" stroke-width="2" filter="url(#glow-yellow)"/>
+        <text x="20" y="6" fill="#f1c40f" font-size="16" text-anchor="middle">x₃</text>
+        <circle cx="60" cy="0" r="20" fill="#1a1a2e" stroke="#f1c40f" stroke-width="2" filter="url(#glow-yellow)"/>
+        <text x="60" y="6" fill="#f1c40f" font-size="16" text-anchor="middle">x₄</text>
+    </g>
+
+    <!-- Skip Connection Path 1 -->
+    <path d="M 460 140 L 650 140 L 650 490 L 460 490" fill="none" stroke="#cccccc" stroke-width="3" marker-end="url(#arrow)"/>
+    <text x="660" y="320" fill="#cccccc" font-size="14">Residual Connection 1</text>
+    
+    <!-- LayerNorm 1 -->
+    <rect x="300" y="200" width="200" height="40" rx="10" fill="none" stroke="#e74c3c" stroke-width="2"/>
+    <text x="400" y="225" fill="#e74c3c" font-size="16" font-weight="bold" text-anchor="middle">LayerNorm (ln_1)</text>
+    <path d="M 400 160 L 400 200" fill="none" stroke="#cccccc" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <!-- Attention Sub-Network -->
+    <rect x="250" y="270" width="300" height="150" rx="15" fill="none" stroke="#3498db" stroke-width="2"/>
+    <text x="400" y="300" fill="#3498db" font-size="18" font-weight="bold" text-anchor="middle">CausalSelfAttention</text>
+    <path d="M 400 240 L 400 270" fill="none" stroke="#cccccc" stroke-width="2" marker-end="url(#arrow)"/>
+    
+    <!-- Mini Attention internals -->
+    <g transform="translate(400, 310)">
+        <circle cx="-50" cy="20" r="10" fill="#1a1a2e" stroke="#3498db" stroke-width="2"/>
+        <circle cx="0" cy="20" r="10" fill="#1a1a2e" stroke="#3498db" stroke-width="2"/>
+        <circle cx="50" cy="20" r="10" fill="#1a1a2e" stroke="#3498db" stroke-width="2"/>
+        <path d="M 0 -10 L -50 10 M 0 -10 L 0 10 M 0 -10 L 50 10" fill="none" stroke="#3498db" stroke-width="1" opacity="0.5"/>
+        <rect x="-80" y="45" width="160" height="30" rx="5" fill="none" stroke="#3498db" stroke-width="1"/>
+        <text x="0" y="65" fill="#3498db" font-size="12" text-anchor="middle">Self-Attention Mechanism</text>
+        
+        <circle cx="-30" cy="95" r="12" fill="#1a1a2e" stroke="#3498db" stroke-width="2" filter="url(#glow-blue)"/>
+        <circle cx="0" cy="95" r="12" fill="#1a1a2e" stroke="#3498db" stroke-width="2" filter="url(#glow-blue)"/>
+        <circle cx="30" cy="95" r="12" fill="#1a1a2e" stroke="#3498db" stroke-width="2" filter="url(#glow-blue)"/>
+    </g>
+
+    <!-- ADD 1 -->
+    <circle cx="400" cy="490" r="20" fill="none" stroke="#cccccc" stroke-width="2"/>
+    <text x="400" y="496" fill="#cccccc" font-size="20" font-weight="bold" text-anchor="middle">+</text>
+    <path d="M 400 420 L 400 470" fill="none" stroke="#cccccc" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="320" y="495" fill="#cccccc" font-size="14">Output_1</text>
+
+    <!-- Skip Connection Path 2 -->
+    <path d="M 420 490 L 650 490 L 650 830 L 460 830" fill="none" stroke="#cccccc" stroke-width="3" marker-end="url(#arrow)"/>
+    <text x="660" y="660" fill="#cccccc" font-size="14">Residual Connection 2</text>
+
+    <!-- LayerNorm 2 -->
+    <rect x="300" y="540" width="200" height="40" rx="10" fill="none" stroke="#e74c3c" stroke-width="2"/>
+    <text x="400" y="565" fill="#e74c3c" font-size="16" font-weight="bold" text-anchor="middle">LayerNorm (ln_2)</text>
+    <path d="M 400 510 L 400 540" fill="none" stroke="#cccccc" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <!-- MLP Sub-Network -->
+    <rect x="150" y="610" width="500" height="180" rx="15" fill="none" stroke="#2ecc71" stroke-width="2"/>
+    <text x="160" y="640" fill="#2ecc71" font-size="18" font-weight="bold">MLP</text>
+    <path d="M 400 580 L 400 610" fill="none" stroke="#cccccc" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <!-- MLP Internal Neurons -->
+    <g transform="translate(400, 650)">
+        <text x="0" y="-15" fill="#2ecc71" font-size="12" text-anchor="middle">c_fc (expands dims 4x)</text>
+        <circle cx="-150" cy="10" r="10" fill="#1a1a2e" stroke="#2ecc71" stroke-width="1.5"/>
+        <circle cx="-90" cy="10" r="10" fill="#1a1a2e" stroke="#2ecc71" stroke-width="1.5"/>
+        <circle cx="-30" cy="10" r="10" fill="#1a1a2e" stroke="#2ecc71" stroke-width="1.5"/>
+        <circle cx="30" cy="10" r="10" fill="#1a1a2e" stroke="#2ecc71" stroke-width="1.5"/>
+        <circle cx="90" cy="10" r="10" fill="#1a1a2e" stroke="#2ecc71" stroke-width="1.5"/>
+        <circle cx="150" cy="10" r="10" fill="#1a1a2e" stroke="#2ecc71" stroke-width="1.5"/>
+        
+        <rect x="-180" y="35" width="360" height="25" rx="5" fill="none" stroke="#2ecc71" stroke-width="1"/>
+        <text x="0" y="52" fill="#2ecc71" font-size="12" text-anchor="middle">GELU Activation</text>
+        
+        <text x="0" y="80" fill="#2ecc71" font-size="12" text-anchor="middle">c_proj (projects back down)</text>
+        <circle cx="-60" cy="100" r="15" fill="#1a1a2e" stroke="#2ecc71" stroke-width="2" filter="url(#glow-green)"/>
+        <circle cx="-20" cy="100" r="15" fill="#1a1a2e" stroke="#2ecc71" stroke-width="2" filter="url(#glow-green)"/>
+        <circle cx="20" cy="100" r="15" fill="#1a1a2e" stroke="#2ecc71" stroke-width="2" filter="url(#glow-green)"/>
+        <circle cx="60" cy="100" r="15" fill="#1a1a2e" stroke="#2ecc71" stroke-width="2" filter="url(#glow-green)"/>
+
+        <!-- Connectors -->
+        <path d="M 0 -40 L -150 0 M 0 -40 L -90 0 M 0 -40 L -30 0 M 0 -40 L 30 0 M 0 -40 L 90 0 M 0 -40 L 150 0" fill="none" stroke="#2ecc71" stroke-width="0.5" opacity="0.3"/>
+        <path d="M -150 20 L -60 85 M -90 20 L -20 85 M -30 20 L 20 85 M 30 20 L 60 85" fill="none" stroke="#2ecc71" stroke-width="0.5" opacity="0.3"/>
+    </g>
+
+    <!-- ADD 2 -->
+    <circle cx="400" cy="830" r="20" fill="none" stroke="#cccccc" stroke-width="2"/>
+    <text x="400" y="836" fill="#cccccc" font-size="20" font-weight="bold" text-anchor="middle">+</text>
+    <path d="M 400 790 L 400 810" fill="none" stroke="#cccccc" stroke-width="2" marker-end="url(#arrow)"/>
+    
+    <!-- Final Output -->
+    <path d="M 400 850 L 400 880" fill="none" stroke="#cccccc" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="400" y="890" fill="#ffffff" font-size="18" font-weight="bold" text-anchor="middle">OUTPUT (to next Block)</text>
+
+</svg>
