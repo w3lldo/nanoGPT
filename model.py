@@ -153,19 +153,30 @@ class GPT(nn.Module):
     """
 
     def __init__(self, config):
+        # super().__init__(): Initializes the parent PyTorch nn.Module class.
         super().__init__()
+        # assert...: Checks that we actually provided a vocabulary size and a maximum sequence length (block size).
         assert config.vocab_size is not None
         assert config.block_size is not None
+        # self.config = config: Saves the configuration settings inside the object for later use.
         self.config = config
 
+        # self.transformer: Creates a dictionary of PyTorch layers that holds the core pieces of the model.
         self.transformer = nn.ModuleDict(dict(
+            # wte: Word Token Embeddings. Converts a word index into a dense feature vector.
             wte = nn.Embedding(config.vocab_size, config.n_embd),
+            # wpe: Word Position Embeddings. Gives a vector representing positions, so the model knows word order.
             wpe = nn.Embedding(config.block_size, config.n_embd),
+            # drop: Dropout layer applied after adding word and position embeddings to prevent overfitting.
             drop = nn.Dropout(config.dropout),
+            # h: The "hidden" layers. A stack of identical Transformer Blocks.
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            # ln_f: The final Layer Normalization applied after the data exits the last Block.
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
         ))
+        # lm_head: The Language Model Head. Projects the final feature vector back out to the vocabulary size to get probabilities.
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        # Weight Tying: The word embeddings and the final output head share the exact same weights matrix, saving 38M parameters!
         # with weight tying when using torch.compile() some warnings get generated:
         # "UserWarning: functional_call was passed multiple values for tied weights.
         # This behavior is deprecated and will be an error in future versions"
@@ -189,39 +200,52 @@ class GPT(nn.Module):
         The token embeddings would too, except due to the parameter sharing these
         params are actually used as weights in the final layer, so we include them.
         """
+        # sum(p.numel()...): Adds up the total count of numbers/variables the model is trying to learn.
         n_params = sum(p.numel() for p in self.parameters())
         if non_embedding:
+            # Subtracts the positional embeddings from the count, following standard conventions for reporting model sizes.
             n_params -= self.transformer.wpe.weight.numel()
         return n_params
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
+            # If the layer is a Linear mathematical projection, initialize the weights to a Normal/Gaussian distribution.
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             if module.bias is not None:
+                # If the layer has bias parameters, initialize them to exactly 0.
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
+            # If the layer is an Embedding dictionary, initialize the weights identically to the Linear modules.
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, idx, targets=None):
         device = idx.device
+        # Extracts the Batch (b) and Sequence length (t) from the input.
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+        # torch.arange(): Creates a simple array of numbers from 0 to t to represent the position indices.
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
+        # wte(idx): Converts raw token IDs into dense feature vectors.
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
+        # wpe(pos): Converts raw positions into feature vectors.
         pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
+        # Adds them together! 'x' now mathematically represents "What is this word, and where is it?", and applies dropout.
         x = self.transformer.drop(tok_emb + pos_emb)
+        # The Super-Highway! The data 'x' flows sequentially through all blocks.
         for block in self.transformer.h:
             x = block(x)
+        # Applies the final LayerNorm after emerging from the deep stack of blocks.
         x = self.transformer.ln_f(x)
 
         if targets is not None:
-            # if we are given some desired targets also calculate the loss
+            # During Training (targets given): Pass the full highway data into the final lm_head to get the logits (predictions).
             logits = self.lm_head(x)
+            # Calculate the loss by comparing those predictions against the actual targets.
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
         else:
-            # inference-time mini-optimization: only forward the lm_head on the very last position
+            # During Generation (inference-time optimization): Pluck out only the very last position in the sequence and pass that through the head to save computation.
             logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
             loss = None
 
@@ -302,7 +326,9 @@ class GPT(nn.Module):
         param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
         # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
         # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        # Decay params: Massive matrices are given "weight decay" to prevent them from growing too large and memorizing the data.
         decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        # No-decay params: 1D vectors (like Biases or LayerNorm scales) are NOT punished for getting large.
         nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
         optim_groups = [
             {'params': decay_params, 'weight_decay': weight_decay},
@@ -345,21 +371,21 @@ class GPT(nn.Module):
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         """
         for _ in range(max_new_tokens):
-            # if the sequence context is growing too long we must crop it at block_size
+            # if the sequence context is growing too long we must crop it at block_size, since the network physically cannot look back further than block_size!
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             # forward the model to get the logits for the index in the sequence
             logits, _ = self(idx_cond)
-            # pluck the logits at the final step and scale by desired temperature
+            # pluck the logits at the final step and scale by desired temperature (High temp = more chaotic choices, Low temp = rigid choices)
             logits = logits[:, -1, :] / temperature
             # optionally crop the logits to only the top k options
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float('Inf')
-            # apply softmax to convert logits to (normalized) probabilities
+            # apply softmax to convert logits to percentages/probabilities
             probs = F.softmax(logits, dim=-1)
-            # sample from the distribution
+            # sample randomly from the distribution (e.g. 80% chance it picks "dog", 20% it picks "cat")
             idx_next = torch.multinomial(probs, num_samples=1)
-            # append sampled index to the running sequence and continue
+            # glue that newly chosen word onto the end of your original sentence array, and repeat the loop!
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx

@@ -2,102 +2,84 @@
 
 ```mermaid
 graph TD
-    classDef main fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
-    classDef block fill:#fff3e0,stroke:#e65100,stroke-width:2px;
-    classDef default font-family:Arial,font-size:14px;
+    classDef main fill:#e1f5fe,stroke:#01579b,stroke-width:3px,font-weight:bold;
+    classDef side fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,stroke-dasharray: 5 5;
+    classDef merge fill:#ffe0b2,stroke:#ef6c00,stroke-width:3px,font-size:20px;
 
-    subgraph "GPT Model"
-        Input["Input Tokens (idx)"]:::main
+    Input["Input Tokens (idx)"]:::main
+    
+    subgraph "Embeddings Phase"
+        direction TB
+        WTE["Word Token Embeddings"]:::side
+        WPE["Word Position Embeddings"]:::side
+        Add_Emb(("➕")):::merge
+        Drop["Dropout"]:::main
         
-        subgraph "Embeddings"
-            WTE["Word Token Embeddings<br>(wte)"]
-            WPE["Word Position Embeddings<br>(wpe)"]
-            Add["+"]
-            Drop["Dropout"]
-            
-            Input --> WTE
-            Input -.-> |"torch.arange"| WPE
-            WTE --> Add
-            WPE --> Add
-            Add --> Drop
-        end
+        Input --> WTE
+        Input -.-> WPE
+        WTE --> Add_Emb
+        WPE --> Add_Emb
+        Add_Emb -->|"x"| Drop
+    end
+    
+    subgraph "Transformer Block (repeated x N)"
+        direction TB
         
-        subgraph "Transformer Blocks (x N)"
-            direction TB
-            Input_Block["Input"]:::block
-            
-            subgraph "Block"
-                LN1["LayerNorm (ln_1)"]
-                Attn["CausalSelfAttention"]
-                Add1["+ (Residual)"]
-                LN2["LayerNorm (ln_2)"]
-                MLP["MLP"]
-                Add2["+ (Residual)"]
-                
-                Input_Block --> LN1
-                Input_Block --> Add1
-                LN1 --> Attn
-                Attn --> Add1
-                
-                Add1 --> LN2
-                Add1 --> Add2
-                LN2 --> MLP
-                MLP --> Add2
-            end
-            Output_Block["Output"]:::block
-            Add2 --> Output_Block
-        end
-        
+        Input_Block["Input to Block (x)"]:::main
         Drop --> Input_Block
+
+        %% ATTENTION BRANCH
+        Fork1{"Split"}:::main
+        Input_Block --> Fork1
         
-        LN_F["Final LayerNorm<br>(ln_f)"]:::main
-        LM_Head["LM Head<br>(Linear)"]:::main
+        %% The main residual highway bypasses Attention
+        Fork1 --->|"Main Residual Highway (x)"| Add1
+        
+        %% The side road into Attention
+        subgraph "Attention Sub-Layer"
+            direction TB
+            LN1["LayerNorm (ln_1)"]:::side
+            Attn["CausalSelfAttention"]:::side
+        end
+        Fork1 --->|"Side Road"| LN1
+        LN1 --> Attn
+        
+        %% Merge back to highway
+        Add1(("➕")):::merge
+        Attn --->|"Context Updates"| Add1
+        
+        %% MLP BRANCH
+        Fork2{"Split"}:::main
+        Add1 --> Fork2
+        
+        %% The main residual highway bypasses MLP
+        Fork2 --->|"Main Residual Highway (x)"| Add2
+        
+        %% The side road into MLP
+        subgraph "MLP Sub-Layer"
+            direction TB
+            LN2["LayerNorm (ln_2)"]:::side
+            MLP["MLP"]:::side
+        end
+        Fork2 --->|"Side Road"| LN2
+        LN2 --> MLP
+        
+        %% Merge back to highway
+        Add2(("➕")):::merge
+        MLP --->|"Deep Thoughts"| Add2
+        
+        Output_Block["Output of Block (x)"]:::main
+        Add2 --> Output_Block
+    end
+    
+    subgraph "Output Phase"
+        direction TB
+        LN_F["Final LayerNorm (ln_f)"]:::main
+        LM_Head["LM Head (Linear)"]:::main
         Logits["Output Logits"]:::main
         
         Output_Block --> LN_F
         LN_F --> LM_Head
         LM_Head --> Logits
-    end
-
-    %% Internal details of components
-    subgraph "Inside CausalSelfAttention"
-        direction LR
-        Attn_In["Input"]
-        C_Attn["c_attn (Linear)"]
-        Split["Split & Reshape"]
-        Q["Queries"]
-        K["Keys"]
-        V["Values"]
-        Dot["Q @ K^T / sqrt(d)"]
-        Mask["Causal Mask"]
-        Softmax["Softmax"]
-        Context["Attention @ V"]
-        C_Proj["c_proj (Linear)"]
-        
-        Attn_In --> C_Attn
-        C_Attn --> Split
-        Split --> Q
-        Split --> K
-        Split --> V
-        
-        Q --> Dot
-        K --> Dot
-        Dot --> Mask
-        Mask --> Softmax
-        Softmax --> Context
-        V --> Context
-        Context --> C_Proj
-    end
-
-    subgraph "Inside MLP"
-        direction LR
-        MLP_In["Input"]
-        FC["c_fc (Linear)"]
-        GELU["GELU Activation"]
-        Proj["c_proj (Linear)"]
-        
-        MLP_In --> FC
-        FC --> GELU
-        GELU --> Proj
     end
 ```
