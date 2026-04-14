@@ -36,6 +36,9 @@ class LayerNorm(nn.Module):
     def forward(self, input):
         """
         Executes the LayerNorm mathematical operation: (x - mean) / variance * scale + shift.
+
+        GEOMETRIC/TYPE EXPLANATION:
+        `input` is a `torch.Tensor` typically of shape (B, T, C). It represents the batch of embedded sentences.
         """
         # F.layer_norm: The actual math. Forces the mean of the input to 0 and variance to 1, then applies our learned weight (scale) and bias (shift). 1e-5 prevents dividing by zero.
         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
@@ -77,6 +80,10 @@ class CausalSelfAttention(nn.Module):
         Executes the Multi-Head Attention mechanism.
         Splits data into Q, K, V matrices, applies the causal mask to prevent cheating, calculates
         attention probabilities via Softmax, and weights the Values to produce the final context updates.
+
+        GEOMETRIC/TYPE EXPLANATION:
+        `x` is a `torch.Tensor` of shape `(B, T, C)` exactly like in the main Block.
+        (Batch Size, Sequence Length, and Embedding Dimensions).
         """
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
@@ -135,6 +142,11 @@ class MLP(nn.Module):
         """
         Processes information for an individual token. Expands the 768-D representation to 3072-D for
         deep processing, applies non-linear GELU activation, and compresses it back down to 768-D.
+
+        GEOMETRIC/TYPE EXPLANATION:
+        `x` is a `torch.Tensor` of shape `(B, T, C)`. Although the MLP mathematically processes each Token
+        completely independently (it doesn't look at neighbor words like Attention does), the Batch (B) 
+        and Time (T) dimensions are still carried straight through the math.
         """
         # c_fc(x): The "Expansion" phase. Projects the 768-D input up to a massive 3072-D vector so it can "think" about concepts in high dimensionality.
         x = self.c_fc(x)
@@ -291,6 +303,12 @@ class GPT(nn.Module):
         The Main Forward Pass. Takes raw word tokens, embeds them, creates positional vectors,
         runs them through the massive Transformer Block stack, and finally maps the dense 768-D vectors
         back into 50,000+ vocabulary probabilities using the LM Head. Calculates Loss during training.
+
+        GEOMETRIC/TYPE EXPLANATION:
+        `idx` and `targets` are `torch.Tensor` objects of shape `(B, T)` (Batch, Time).
+        CRITICALLY: Unlike internal blocks, these do NOT contain floating point numbers! They contain 
+        raw Integer IDs representing words (e.g., `idx[0,:] = [12, 532, 1024...]`).
+        This function returns `logits` formatted as a massively dense float Tensor of shape `(B, T, Vocab_Size)`.
         """
         device = idx.device
         # Extracts the Batch (b) and Sequence length (t) from the input.
@@ -473,6 +491,12 @@ class GPT(nn.Module):
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
+
+        GEOMETRIC/TYPE EXPLANATION:
+        `idx` starts as a `torch.Tensor` of integers of shape `(B, T)`. 
+        With each loop iteration, we predict 1 new token mathematically, and literally glue it 
+        onto the end of the array using `torch.cat`, causing the sequence length (T) to grow by 1 each time!
+        Returns a final integer tensor of shape `(B, T + max_new_tokens)`.
         """
         for _ in range(max_new_tokens):
             # if the sequence context is growing too long we must crop it at block_size, since the network physically cannot look back further than block_size!
