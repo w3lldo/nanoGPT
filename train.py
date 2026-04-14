@@ -78,10 +78,17 @@ exec(open('configurator.py').read()) # overrides from command line or config fil
 config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
 
+# =============================================================================
+# PART 1: DISTRIBUTED DATA PARALLEL (DDP) AND SYSTEM SETUP
+# This section configures the training to either run on a single graphics card
+# or coordinate massive clusters of GPUs simultaneously across the internet.
+# =============================================================================
 # various inits, derived attributes, I/O setup
+# ddp: Checks if this script was launched via `torchrun`, which secretly injects a 'RANK' environment variable.
 ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
 if ddp:
     init_process_group(backend=backend)
+    # Rank math: Identifies exactly which computer in the cluster this exact script is running on.
     ddp_rank = int(os.environ['RANK'])
     ddp_local_rank = int(os.environ['LOCAL_RANK'])
     ddp_world_size = int(os.environ['WORLD_SIZE'])
@@ -111,9 +118,16 @@ device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.aut
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
+# =============================================================================
+# PART 2: DATA LOADING AND MEMORY MAPPING
+# =============================================================================
 # poor man's data loader
 data_dir = os.path.join('data', dataset)
 def get_batch(split):
+    """
+    Rips out a tiny chunk of text from the massive dataset file to feed into the model.
+    Uses numpy memmap so we don't have to load a 50GB text file into our RAM all at once!
+    """
     # We recreate np.memmap every batch to avoid a memory leak, as per
     # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
     if split == 'train':
@@ -143,10 +157,14 @@ if os.path.exists(meta_path):
     meta_vocab_size = meta['vocab_size']
     print(f"found vocab_size = {meta_vocab_size} (inside {meta_path})")
 
+# =============================================================================
+# PART 3: MODEL INITIALIZATION (THE BRAIN)
+# =============================================================================
 # model init
 model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
                   bias=bias, vocab_size=None, dropout=dropout) # start with model_args from command line
 if init_from == 'scratch':
+    # 'scratch': We are ignoring pre-trained brains and starting as a 100% mathematically blank slate.
     # init a new model from scratch
     print("Initializing a new model from scratch")
     # determine the vocab size we'll use for from-scratch training
@@ -192,10 +210,13 @@ if block_size < model.config.block_size:
     model_args['block_size'] = block_size # so that the checkpoint will have the right value
 model.to(device)
 
-# initialize a GradScaler. If enabled=False scaler is a no-op
+# =============================================================================
+# PART 4: OPTIMIZER AND COMPILATION
+# =============================================================================
+# initialize a GradScaler: This is the mathematically genius component that allows Mixed-Precision 16-bit training without gradients exploding to 0.
 scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
-# optimizer
+# optimizer: The engine that literally adjusts the model weights downward based on the calculus gradient path.
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
 if init_from == 'resume':
     optimizer.load_state_dict(checkpoint['optimizer'])
@@ -211,9 +232,17 @@ if compile:
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 
+# =============================================================================
+# PART 5: VALIDATION AND LOSS ESTIMATION
+# =============================================================================
 # helps estimate an arbitrarily accurate loss over either split using many batches
 @torch.no_grad()
 def estimate_loss():
+    """
+    Because a single batch's loss is too noisy/random, this function temporarily stops training, 
+    turns off all calculus gradients (to save memory), and tests the model on several hundred batches 
+    to get a highly accurate average score of how smart the model is currently.
+    """
     out = {}
     model.eval()
     for split in ['train', 'val']:
@@ -227,15 +256,22 @@ def estimate_loss():
     model.train()
     return out
 
+# =============================================================================
+# PART 6: LEARNING RATE SCHEDULER
+# =============================================================================
 # learning rate decay scheduler (cosine with warmup)
 def get_lr(it):
+    """
+    Slowly turns down the 'learning rate' (how fast the model changes its mind) as training goes on.
+    Imagine playing golf: you use a driver (high LR) at the start to cover distance, and a precise putter (low LR) near the hole.
+    """
     # 1) linear warmup for warmup_iters steps
     if it < warmup_iters:
         return learning_rate * (it + 1) / (warmup_iters + 1)
     # 2) if it > lr_decay_iters, return min learning rate
     if it > lr_decay_iters:
         return min_lr
-    # 3) in between, use cosine decay down to min learning rate
+    # 3) in between, use cosine decay down to min learning rate (the beautiful swooping curve)
     decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
     assert 0 <= decay_ratio <= 1
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff ranges 0..1
@@ -246,8 +282,12 @@ if wandb_log and master_process:
     import wandb
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
+# =============================================================================
+# PART 7: THE MAIN TRAINING LOOP - WHERE THE MAGIC HAPPENS!
+# This is where the actual machine learning happens! It loops millions of times.
+# =============================================================================
 # training loop
-X, Y = get_batch('train') # fetch the very first batch
+X, Y = get_batch('train') # fetch the very first batch of Tokens (X) and their associated perfectly-correct Target answers (Y)
 t0 = time.time()
 local_iter_num = 0 # number of iterations in the lifetime of this process
 raw_model = model.module if ddp else model # unwrap DDP container if needed
@@ -255,12 +295,16 @@ running_mfu = -1.0
 while True:
 
     # determine and set the learning rate for this iteration
+    # Step A: Calculate the exact learning rate (putter vs driver mode) for this exact mathematical step
     lr = get_lr(iter_num) if decay_lr else learning_rate
+    # Step B: Apply that calculated speed specifically into the Optimizer's brain
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
     # evaluate the loss on train/val sets and write checkpoints
+    # Every `eval_interval` (e.g. 2000 steps), we momentarily pause the intense training math.
     if iter_num % eval_interval == 0 and master_process:
+        # We run the `estimate_loss()` to fairly test the model without it being able to memorize the data.
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
         if wandb_log:
@@ -283,34 +327,42 @@ while True:
                     'config': config,
                 }
                 print(f"saving checkpoint to {out_dir}")
+                # Mathematically 'freezes' the brain and writes out a .pt checkpoint file so we don't lose our progress if the power goes out.
                 torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
     if iter_num == 0 and eval_only:
         break
 
     # forward backward update, with optional gradient accumulation to simulate larger batch size
-    # and using the GradScaler if data type is float16
+    # gradient_accumulation_steps: If our GPU memory is too small to fit 32 batches, we fit 4 batches 8 times, and 'accumulate' the mathematical gradients before actually taking a physical step!
     for micro_step in range(gradient_accumulation_steps):
         if ddp:
             # in DDP training we only need to sync gradients at the last micro step.
-            # the official way to do this is with model.no_sync() context manager, but
-            # I really dislike that this bloats the code and forces us to repeat code
-            # looking at the source of that context manager, it just toggles this variable
             model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
+        
+        # with ctx: This applies Mixed-Precision. It automatically runs easy math in 16-bit to run 2x as fast, and explicitly saves hard math for 32-bit.
         with ctx:
+            # model(X,Y): The actual Forward Pass! The model looks at X and tries to guess Y.
             logits, loss = model(X, Y)
-            loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
+            # We scale the loss down because we are sequentially accumulating multiple tiny batches into one mega batch over time.
+            loss = loss / gradient_accumulation_steps 
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
         X, Y = get_batch('train')
-        # backward pass, with gradient scaling if training in fp16
+        
+        # scaler.scale(loss).backward(): The actual Backward Pass! (Calculus). This runs backward through the network and figures out exactly which neurons were wrong and which were right!
         scaler.scale(loss).backward()
+        
     # clip the gradient
+    # Sometimes gradients explode mathematically to infinity. Clipping forces a strict speed limit on the calculus updates to prevent the model from breaking itself mid-training.
     if grad_clip != 0.0:
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        
     # step the optimizer and scaler if training in fp16
+    # optimizer.step(): The defining moment of Machine Learning! This is where the weights physically change permanently and the network actually "learns".
     scaler.step(optimizer)
     scaler.update()
-    # flush the gradients as soon as we can, no need for this memory anymore
+    
+    # zero_grad: After we update the model, we MUST wipe the calculus slate entirely clean, or the next batch will mathematically add on top of the old batch!
     optimizer.zero_grad(set_to_none=True)
 
     # timing and logging

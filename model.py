@@ -24,11 +24,20 @@ class LayerNorm(nn.Module):
     """
 
     def __init__(self, ndim, bias):
+        """
+        Initializes the LayerNorm with learnable Gamma (weight) and Beta (bias) parameters.
+        """
         super().__init__()
+        # self.weight: The "Gamma" scale parameter. Initializes to all 1s so it doesn't change anything at first. It will be learned to stretch/squish data.
         self.weight = nn.Parameter(torch.ones(ndim))
+        # self.bias: The "Beta" shift parameter. Initializes to 0s so it doesn't change anything at first. It will be learned to shift data left/right.
         self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
 
     def forward(self, input):
+        """
+        Executes the LayerNorm mathematical operation: (x - mean) / variance * scale + shift.
+        """
+        # F.layer_norm: The actual math. Forces the mean of the input to 0 and variance to 1, then applies our learned weight (scale) and bias (shift). 1e-5 prevents dividing by zero.
         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
 
 class CausalSelfAttention(nn.Module):
@@ -40,11 +49,14 @@ class CausalSelfAttention(nn.Module):
     """
 
     def __init__(self, config):
+        """
+        Sets up the Linear projections for Queries, Keys, and Values, and initializes Dropouts and the Causal Mask.
+        """
         super().__init__()
         assert config.n_embd % config.n_head == 0
-        # key, query, value projections for all heads, but in a batch
+        # self.c_attn: A single massive Linear layer that creates the Queries, Keys, and Values all at once! This is 3x the embedding size so it can be split cleanly into 3 equal pieces later.
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
-        # output projection
+        # self.c_proj: The final Linear layer that mixes the output of all the parallel attention heads back together into a single 768-D vector.
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
@@ -61,10 +73,17 @@ class CausalSelfAttention(nn.Module):
                                         .view(1, 1, config.block_size, config.block_size))
 
     def forward(self, x):
+        """
+        Executes the Multi-Head Attention mechanism.
+        Splits data into Q, K, V matrices, applies the causal mask to prevent cheating, calculates
+        attention probabilities via Softmax, and weights the Values to produce the final context updates.
+        """
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        # c_attn(x): Projects the input 'x' into the massive QKV matrix. .split(): slices that massive matrix into 3 exact 1/3rd chunks: Queries, Keys, and Values.
         q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
+        # .view(): Splits the 768-dimension features perfectly into 12 separate "heads" of 64 features each. .transpose(): Rearranges dimensions so the Head is the 2nd dimension for efficient parallel processing.
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
@@ -75,14 +94,22 @@ class CausalSelfAttention(nn.Module):
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
         else:
             # manual implementation of attention
+            # (q @ k.transpose): Words asking questions (Q) multiplied by words answering them (K) to find "Similarity Scores" (how much they should care about each other).
+            # * (1.0 / math.sqrt...): Scales the scores down so they don't explode and break the softmax.
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+            # masked_fill: The "Causal" part! Forces all future word combinations to negative infinity (-inf) so words can NEVER cheat by looking at answers they haven't seen yet.
             att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+            # F.softmax: Converts the raw similarity scores into percentages (probabilities that sum to 1.0).
             att = F.softmax(att, dim=-1)
+            # attn_dropout: Randomly zeroes out some attention scores during training to prevent memorization / overfitting.
             att = self.attn_dropout(att)
+            # att @ v: The final weighting! We multiply our newly calculated percentages against the actual Values (V) to get the final context-mixed updates.
             y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        # transpose.contiguous.view: Re-assembles the partitioned heads back together. The 12 heads of 64 features are slammed back into a single continuous 768-D vector.
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
         # output projection
+        # c_proj(y): The final Linear matrix that mixes the newly assembled vector.
         y = self.resid_dropout(self.c_proj(y))
         return y
 
@@ -95,6 +122,9 @@ class MLP(nn.Module):
     """
 
     def __init__(self, config):
+        """
+        Initializes the fully-connected expansion layer, the GELU activation, and the compression layer.
+        """
         super().__init__()
         self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
         self.gelu    = nn.GELU()
@@ -102,8 +132,15 @@ class MLP(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
+        """
+        Processes information for an individual token. Expands the 768-D representation to 3072-D for
+        deep processing, applies non-linear GELU activation, and compresses it back down to 768-D.
+        """
+        # c_fc(x): The "Expansion" phase. Projects the 768-D input up to a massive 3072-D vector so it can "think" about concepts in high dimensionality.
         x = self.c_fc(x)
+        # gelu(x): The Non-Linear activation. Without this, the network would just be doing flat linear algebra. This allows it to learn complex, curvy patterns.
         x = self.gelu(x)
+        # c_proj(x): The "Compression" phase. Squeezes the expanded 3072-D thought back down perfectly to the 768-D vector shape so it can fit smoothly back onto the Super-Highway.
         x = self.c_proj(x)
         x = self.dropout(x)
         return x
@@ -117,6 +154,9 @@ class Block(nn.Module):
     """
 
     def __init__(self, config):
+        """
+        Initializes the fundamental Transformer components: Attention, MLP, and their respective LayerNorms.
+        """
         super().__init__()
         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
         self.attn = CausalSelfAttention(config)
@@ -124,6 +164,26 @@ class Block(nn.Module):
         self.mlp = MLP(config)
 
     def forward(self, x):
+        """
+        Runs the full block logic: Takes data from the residual highway, passes it through Attention
+        for context, adds it back to the highway. Then passes the new data through the MLP for "thinking",
+        and adds it back to the highway again.
+
+        WHAT IS `x` GEOMETRICALLY?
+        Because Python's dynamic typing hides it, it's important to know `x` is a `torch.Tensor` (a highly 
+        optimized 3D array of floating point numbers). Its shape is exactly (B, T, C), meaning:
+        - B (Batch): Number of independent sentences processed at once (e.g., 12).
+        - T (Time): Sequence length / number of words in the sentence (e.g., 1024).
+        - C (Channels): Embedding size / math features defining a single word (e.g., 768).
+        If you isolated one word `x[0, 5, :]`, it is literally an array of 768 decimal numbers that represent its current meaning!
+        """
+        # THE CALCULUS OF `+` (THE RESIDUAL SUPER-HIGHWAY):
+        # In the forward pass, this adds the new context mathematically back into the original 'x' identity.
+        # In the BACKWARD pass (learning), the `+` acts as a perfect "Gradient Distributor". 
+        # When an error signal hits the `+`, it gets perfectly cloned. One copy goes into the Attention/MLP 
+        # to update those specific weights. The other copy rockets STRAIGHT DOWN the pristine 'x' highway 
+        # completely untouched, bypassing the complex math! This prevents the "Vanishing Gradient Problem" 
+        # and guarantees that early layers always receive a loud, clear learning signal.
         x = x + self.attn(self.ln_1(x))
         x = x + self.mlp(self.ln_2(x))
         return x
@@ -153,6 +213,10 @@ class GPT(nn.Module):
     """
 
     def __init__(self, config):
+        """
+        Initializes the ENTIRE GPT model, including vocabulary embeddings, positional embeddings,
+        the stack of transformer blocks, and the final language modeling head.
+        """
         # super().__init__(): Initializes the parent PyTorch nn.Module class.
         super().__init__()
         # assert...: Checks that we actually provided a vocabulary size and a maximum sequence length (block size).
@@ -208,6 +272,10 @@ class GPT(nn.Module):
         return n_params
 
     def _init_weights(self, module):
+        """
+        Initialization logic for setting the initial untrained values (Gaussian random distributions)
+        for all Linear and Embedding modules before training begins.
+        """
         if isinstance(module, nn.Linear):
             # If the layer is a Linear mathematical projection, initialize the weights to a Normal/Gaussian distribution.
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
@@ -219,6 +287,11 @@ class GPT(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, idx, targets=None):
+        """
+        The Main Forward Pass. Takes raw word tokens, embeds them, creates positional vectors,
+        runs them through the massive Transformer Block stack, and finally maps the dense 768-D vectors
+        back into 50,000+ vocabulary probabilities using the LM Head. Calculates Loss during training.
+        """
         device = idx.device
         # Extracts the Batch (b) and Sequence length (t) from the input.
         b, t = idx.size()
@@ -252,18 +325,30 @@ class GPT(nn.Module):
         return logits, loss
 
     def crop_block_size(self, block_size):
+        """
+        Model surgery logic. Useful if we load a massive pre-trained model (like GPT-2 1024 block size)
+        but only have enough GPU memory to run a 256 block size context window. Slices the arrays.
+        """
         # model surgery to decrease the block size if necessary
         # e.g. we may load the GPT2 pretrained model checkpoint (block size 1024)
         # but want to use a smaller block size for some smaller, simpler model
         assert block_size <= self.config.block_size
         self.config.block_size = block_size
+        # Slices the Position Embedding dictionary to throw out absolute positions we don't need anymore.
         self.transformer.wpe.weight = nn.Parameter(self.transformer.wpe.weight[:block_size])
         for block in self.transformer.h:
             if hasattr(block.attn, 'bias'):
+                # Shrinks the geometric Causal Mask (the triangle) in every attention block so it tightly matches the new smaller sequence length.
                 block.attn.bias = block.attn.bias[:,:,:block_size,:block_size]
 
     @classmethod
     def from_pretrained(cls, model_type, override_args=None):
+        """
+        The "State Dictionary Hijacker"! 
+        This method doesn't train a model. Instead, it creates an empty 'shell' of our GPT model, 
+        downloads full, pre-trained weights from HuggingFace (originally trained by OpenAI for millions of dollars),
+        and surgically injects those weights into our empty shell so we can chat with it immediately!
+        """
         assert model_type in {'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'}
         override_args = override_args or {} # default to empty dict
         # only dropout can be overridden see more notes below
@@ -271,7 +356,7 @@ class GPT(nn.Module):
         from transformers import GPT2LMHeadModel
         print("loading weights from pretrained gpt: %s" % model_type)
 
-        # n_layer, n_head and n_embd are determined from model_type
+        # 1. ARCHITECTURE MAPPING: Determine the exact shape of the "empty shell" we need to build based on the model name.
         config_args = {
             'gpt2':         dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
             'gpt2-medium':  dict(n_layer=24, n_head=16, n_embd=1024), # 350M params
@@ -279,6 +364,7 @@ class GPT(nn.Module):
             'gpt2-xl':      dict(n_layer=48, n_head=25, n_embd=1600), # 1558M params
         }[model_type]
         print("forcing vocab_size=50257, block_size=1024, bias=True")
+        # Hardcode the static assumptions built into OpenAI's original GPT-2 release:
         config_args['vocab_size'] = 50257 # always 50257 for GPT model checkpoints
         config_args['block_size'] = 1024 # always 1024 for GPT model checkpoints
         config_args['bias'] = True # always True for GPT model checkpoints
@@ -286,40 +372,58 @@ class GPT(nn.Module):
         if 'dropout' in override_args:
             print(f"overriding dropout rate to {override_args['dropout']}")
             config_args['dropout'] = override_args['dropout']
-        # create a from-scratch initialized minGPT model
+        
+        # 2. CREATE OUR EMPTY SHELL
         config = GPTConfig(**config_args)
         model = GPT(config)
+        # Grab our empty dictionary of random weights that we just initialized
         sd = model.state_dict()
         sd_keys = sd.keys()
-        sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')] # discard this mask / buffer, not a param
+        # Discard the Causal Mask buffer from the list of weights to copy, because it's just a generated triangle of 1s and 0s, not a learned training parameter.
+        sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')]
 
-        # init a huggingface/transformers model
+        # 3. DOWNLOAD THE HUGGINGFACE WEIGHTS
+        # This reaches out to the internet, downloads the ~500MB+ PyTorch checkpoint file, and loads it into memory.
         model_hf = GPT2LMHeadModel.from_pretrained(model_type)
         sd_hf = model_hf.state_dict()
 
-        # copy while ensuring all of the parameters are aligned and match in names and shapes
+        # 4. PREPARE THE SURGERY
+        # Grab HuggingFace's dictionary of fully-trained weights
         sd_keys_hf = sd_hf.keys()
         sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.masked_bias')] # ignore these, just a buffer
         sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.bias')] # same, just the mask (buffer)
+        
+        # OpenAI used a weird "Conv1D" module instead of standard "Linear" math for their matrices when they published the code back in 2019.
+        # Conv1D stores matrices transposed (flipped sideways) compared to how our clean `nn.Linear` expects them.
         transposed = ['attn.c_attn.weight', 'attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
-        # basically the openai checkpoints use a "Conv1D" module, but we only want to use a vanilla Linear
-        # this means that we have to transpose these weights when we import them
+        
+        # Ensure our list of empty dictionary layers perfectly lines up with HuggingFace's list of completed layers.
         assert len(sd_keys_hf) == len(sd_keys), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
+        
+        # 5. EXECUTE THE SURGERY
         for k in sd_keys_hf:
             if any(k.endswith(w) for w in transposed):
-                # special treatment for the Conv1D weights we need to transpose
+                # If we hit one of OpenAI's weird Conv1D matrices, we must verify the flip shape
                 assert sd_hf[k].shape[::-1] == sd[k].shape
                 with torch.no_grad():
+                    # .t() transposes (flips) the HuggingFace matrix geometry so it perfectly fills our nn.Linear matrix geometry! 
                     sd[k].copy_(sd_hf[k].t())
             else:
-                # vanilla copy over the other parameters
+                # For standard weights (like LayerNorms or Embeddings), the geometries already match perfectly.
                 assert sd_hf[k].shape == sd[k].shape
                 with torch.no_grad():
+                    # Simply copy the trained numbers over into our empty shell.
                     sd[k].copy_(sd_hf[k])
 
+        # Return the freshly loaded, fully trained model!
         return model
 
     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
+        """
+        Sets up the AdamW optimization strategy. 
+        Intelligently separates massive weight matrices (which require weight decay regularization)
+        from 1D biases/LayerNorms (which do not), then initializes the optimizer to begin training.
+        """
         # start with all of the candidate parameters
         param_dict = {pn: p for pn, p in self.named_parameters()}
         # filter out those that do not require grad
