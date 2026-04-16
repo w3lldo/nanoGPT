@@ -78,7 +78,7 @@ exec(open('configurator.py').read()) # overrides from command line or config fil
 config = {k: globals()[k] for k in config_keys} # will be useful for logging
 # -----------------------------------------------------------------------------
 
-# =============================================================================
+# =============================================================================f
 # PART 1: DISTRIBUTED DATA PARALLEL (DDP) AND SYSTEM SETUP
 # This section configures the training to either run on a single graphics card
 # or coordinate massive clusters of GPUs simultaneously across the internet.
